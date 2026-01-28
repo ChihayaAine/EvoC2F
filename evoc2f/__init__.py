@@ -1,6 +1,8 @@
 """EvoC2F: Evolving Compilable Code Framework."""
 
-from .plan_ir import (
+__version__ = "0.1.0"
+
+from .core.plan_ir import (
     SideEffect,
     Environment,
     EffectType,
@@ -12,36 +14,37 @@ from .plan_ir import (
     PlanIR,
     ToolRegistry,
 )
-from .compiler import (
+from .core.compiler import (
     CompilerConfig,
     CompiledPlan,
     SemanticCompiler,
 )
-from .runtime import (
+from .runtime.executor import (
     ExecutionConfig,
     ExecutionResult,
     Executor,
 )
-from .skills import (
+from .skills.skills import (
     SkillLibrary,
     SkillStatus,
 )
-from .planner import (
+from .planning.planner import (
     PlannerConfig,
     SkillAugmentedPlanner,
 )
-from .verification import (
+from .verification.verification import (
     VerificationConfig,
     VerificationReport,
     SkillVerifier,
 )
-from .learning import (
+from .learning.learning import (
     Trace,
     CandidateExtractor,
     PreferenceLearner,
 )
 
 __all__ = [
+    "__version__",
     "SideEffect",
     "Environment",
     "EffectType",

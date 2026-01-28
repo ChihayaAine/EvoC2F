@@ -3,17 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .plan_ir import (
+from ..core.plan_ir import (
     EffectType,
     PlanIR,
     PlanNode,
     RetryPolicy,
+    SideEffect,
     Tool,
     ToolRegistry,
     build_plan_ir,
 )
-from .skills import SkillLibrary
-from .utils import cosine_similarity, MLP
+from ..skills.skills import SkillLibrary
+from ..utils.math import cosine_similarity, MLP
 
 
 @dataclass
@@ -68,6 +69,7 @@ class SkillAugmentedPlanner:
         nodes: List[PlanNode] = []
         for idx, tool in enumerate(tools):
             node_id = f"v{idx}"
+            idem_key = idempotency_keys[idx] or self._infer_idempotency_key(tool, params[idx])
             node = PlanNode(
                 node_id=node_id,
                 func=tool,
@@ -75,10 +77,18 @@ class SkillAugmentedPlanner:
                 effect=tool.effect,
                 resources=tool.resources,
                 retry_policy=self.config.default_retry,
-                idempotency_key=idempotency_keys[idx],
+                idempotency_key=idem_key,
                 output_type=None,
                 compensation=tool.metadata.get("compensate"),
             )
             nodes.append(node)
         return build_plan_ir(nodes, self.registry)
+
+    def _infer_idempotency_key(self, tool: Tool, params: Dict[str, Any]) -> Optional[str]:
+        generator = tool.metadata.get("idempotency_key")
+        if callable(generator):
+            return generator(params)
+        if tool.effect.side_effect != SideEffect.PURE:
+            return f"{tool.name}:{hash(str(params))}"
+        return None
 

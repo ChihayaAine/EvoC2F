@@ -102,16 +102,14 @@ class SemanticCompiler:
         return est, lst, critical
 
     def _schedule(self, plan: PlanIR, order: List[str]) -> Dict[str, ScheduledNode]:
-        rate_limits = self._init_token_buckets(plan)
+        buckets = self._init_token_buckets(plan)
         schedule: Dict[str, ScheduledNode] = {}
-        inflight: List[ScheduledNode] = []
-        ready_set = set(order)
         rank = self._upward_rank(plan)
-        while ready_set:
-            candidates = sorted(
-                ready_set, key=lambda n: rank[n], reverse=True
-            )
-            scheduled_any = False
+        unscheduled = set(order)
+        backoff_ms = 1.0
+        while unscheduled:
+            progress = False
+            candidates = sorted(unscheduled, key=lambda n: rank[n], reverse=True)
             for node_id in candidates:
                 preds = plan.predecessors(node_id)
                 if any(pred not in schedule for pred in preds):
@@ -120,23 +118,42 @@ class SemanticCompiler:
                 if preds:
                     earliest = max(schedule[p].end_ms for p in preds)
                 start_time = self._find_feasible_start(
-                    plan, node_id, earliest, schedule, inflight, rate_limits
+                    plan, node_id, earliest, schedule, buckets
                 )
                 if start_time is None:
                     continue
                 duration = plan.nodes[node_id].func.expected_latency_ms
-                scheduled = ScheduledNode(
+                schedule[node_id] = ScheduledNode(
                     node_id=node_id,
                     start_ms=start_time,
                     end_ms=start_time + duration,
                 )
-                schedule[node_id] = scheduled
-                inflight.append(scheduled)
-                ready_set.remove(node_id)
-                scheduled_any = True
+                self._reserve_rate_tokens(plan.nodes[node_id], start_time, buckets)
+                unscheduled.remove(node_id)
+                progress = True
                 break
-            if not scheduled_any:
-                raise RuntimeError("Unable to find feasible schedule under constraints")
+            if not progress:
+                backoff_ms *= 2
+                if backoff_ms > self.config.deadline_ms:
+                    raise RuntimeError("Unable to find feasible schedule under constraints")
+                for node_id in list(unscheduled):
+                    if plan.predecessors(node_id):
+                        continue
+                    start_time = self._find_feasible_start(
+                        plan, node_id, backoff_ms, schedule, buckets
+                    )
+                    if start_time is not None:
+                        duration = plan.nodes[node_id].func.expected_latency_ms
+                        schedule[node_id] = ScheduledNode(
+                            node_id=node_id,
+                            start_ms=start_time,
+                            end_ms=start_time + duration,
+                        )
+                        self._reserve_rate_tokens(plan.nodes[node_id], start_time, buckets)
+                        unscheduled.remove(node_id)
+                        progress = True
+                if not progress:
+                    raise RuntimeError("Unable to find feasible schedule under constraints")
         return schedule
 
     def _upward_rank(self, plan: PlanIR) -> Dict[str, float]:
@@ -169,14 +186,13 @@ class SemanticCompiler:
         node_id: str,
         earliest: float,
         schedule: Dict[str, ScheduledNode],
-        inflight: List[ScheduledNode],
         buckets: Dict[str, "TokenBucket"],
     ) -> Optional[float]:
         node = plan.nodes[node_id]
         start = earliest
         backoff = 1.0
         while start <= self.config.deadline_ms:
-            if not self._respects_concurrency(start, schedule):
+            if not self._respects_concurrency(start, node.func.expected_latency_ms, schedule):
                 start += backoff
                 backoff *= 2
                 continue
@@ -191,23 +207,31 @@ class SemanticCompiler:
             return start
         return None
 
-    def _respects_concurrency(self, start: float, schedule: Dict[str, ScheduledNode]) -> bool:
+    def _respects_concurrency(
+        self, start: float, duration: float, schedule: Dict[str, ScheduledNode]
+    ) -> bool:
+        end = start + duration
         active = 0
         for item in schedule.values():
-            if item.start_ms <= start < item.end_ms:
+            if self._interval_overlap(start, end, item.start_ms, item.end_ms):
                 active += 1
         return active < self.config.concurrency_limit
 
     def _respects_resource_conflicts(
         self, plan: PlanIR, node: PlanNode, start: float, schedule: Dict[str, ScheduledNode]
     ) -> bool:
+        duration = node.func.expected_latency_ms
+        end = start + duration
         for scheduled in schedule.values():
-            if not (scheduled.start_ms <= start < scheduled.end_ms):
+            if not self._interval_overlap(start, end, scheduled.start_ms, scheduled.end_ms):
                 continue
             other = plan.nodes[scheduled.node_id]
             if _conflict(node.resources, other.resources):
                 return False
         return True
+
+    def _interval_overlap(self, a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+        return a_start < b_end and b_start < a_end
 
     def _respects_rate_limits(
         self, node: PlanNode, start: float, buckets: Dict[str, "TokenBucket"]
@@ -217,6 +241,14 @@ class SemanticCompiler:
             if bucket and not bucket.has_token_at(start):
                 return False
         return True
+
+    def _reserve_rate_tokens(
+        self, node: PlanNode, start: float, buckets: Dict[str, "TokenBucket"]
+    ) -> None:
+        for access in node.resources:
+            bucket = buckets.get(access.resource)
+            if bucket:
+                bucket.consume_at(start)
 
     def _rate_penalty(self, plan: PlanIR, schedule: Dict[str, ScheduledNode]) -> float:
         window_ms = 1000.0
@@ -281,4 +313,7 @@ class TokenBucket:
             self.tokens -= 1.0
             return True
         return False
+
+    def consume_at(self, t: float) -> bool:
+        return self.consume(t)
 

@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from .plan_ir import Skill
+from ..core.plan_ir import Skill
 
 
 @dataclass
@@ -45,16 +45,22 @@ class SkillVerifier:
         held_out_tasks: Iterable[Dict[str, Any]],
         baseline_fn: Callable[[Dict[str, Any]], bool],
     ) -> VerificationReport:
-        stage1 = self._stage1(skill, nominal_inputs, boundary_generator, error_generator)
-        stage2 = self._stage2(skill, pre_condition, post_condition, param_sampler)
-        stage3 = self._stage3(skill, held_out_tasks, baseline_fn)
+        stage1, stage1_details = self._stage1(
+            skill, nominal_inputs, boundary_generator, error_generator
+        )
+        stage2, stage2_details = self._stage2(skill, pre_condition, post_condition, param_sampler)
+        stage3, stage3_details = self._stage3(skill, held_out_tasks, baseline_fn)
         passed = stage1 and stage2 and stage3
         return VerificationReport(
             passed=passed,
             stage1_passed=stage1,
             stage2_passed=stage2,
             stage3_passed=stage3,
-            details={},
+            details={
+                "stage1": stage1_details,
+                "stage2": stage2_details,
+                "stage3": stage3_details,
+            },
         )
 
     def _stage1(
@@ -63,17 +69,26 @@ class SkillVerifier:
         nominal_inputs: Iterable[Dict[str, Any]],
         boundary_generator: Callable[[], Dict[str, Any]],
         error_generator: Callable[[], Dict[str, Any]],
-    ) -> bool:
+    ) -> Tuple[bool, Dict[str, Any]]:
+        details = {"nominal": 0, "boundary": 0, "error": 0, "failures": []}
         for params in nominal_inputs:
             if not self._safe_exec(skill, params):
-                return False
+                details["failures"].append({"stage": "nominal", "params": params})
+                return False, details
+            details["nominal"] += 1
         for _ in range(self.config.boundary_cases):
-            if not self._safe_exec(skill, boundary_generator()):
-                return False
+            params = boundary_generator()
+            if not self._safe_exec(skill, params):
+                details["failures"].append({"stage": "boundary", "params": params})
+                return False, details
+            details["boundary"] += 1
         for _ in range(self.config.error_cases):
-            if not self._safe_exec(skill, error_generator(), allow_error=True):
-                return False
-        return True
+            params = error_generator()
+            if not self._safe_exec(skill, params, allow_error=True):
+                details["failures"].append({"stage": "error", "params": params})
+                return False, details
+            details["error"] += 1
+        return True, details
 
     def _stage2(
         self,
@@ -81,24 +96,29 @@ class SkillVerifier:
         pre_condition: Callable[[Dict[str, Any]], bool],
         post_condition: Callable[[Any], bool],
         param_sampler: Callable[[], Dict[str, Any]],
-    ) -> bool:
+    ) -> Tuple[bool, Dict[str, Any]]:
+        details = {"checked": 0, "violations": 0}
         for _ in range(self.config.randomized_checks):
             params = param_sampler()
             if not pre_condition(params):
                 continue
             output = self._safe_exec(skill, params)
             if output is False:
-                return False
+                details["violations"] += 1
+                return False, details
             if not post_condition(output):
-                return False
-        return True
+                details["violations"] += 1
+                return False, details
+            details["checked"] += 1
+        return True, details
 
     def _stage3(
         self,
         skill: Skill,
         held_out_tasks: Iterable[Dict[str, Any]],
         baseline_fn: Callable[[Dict[str, Any]], bool],
-    ) -> bool:
+    ) -> Tuple[bool, Dict[str, Any]]:
+        details = {"total": 0, "regressions": 0}
         regressions = 0
         total = 0
         for task in held_out_tasks:
@@ -108,9 +128,13 @@ class SkillVerifier:
             if (with_skill is False) and without_skill:
                 regressions += 1
         if total == 0:
-            return True
+            details["total"] = 0
+            return True, details
         delta = regressions / total
-        return delta <= self.config.max_regression
+        details["total"] = total
+        details["regressions"] = regressions
+        details["delta"] = delta
+        return delta <= self.config.max_regression, details
 
     def _safe_exec(
         self, skill: Skill, params: Dict[str, Any], allow_error: bool = False

@@ -42,6 +42,10 @@ class ResourceAccess:
     resource: str
     mode: str  # "R" or "W"
 
+    def __post_init__(self) -> None:
+        if self.mode not in ("R", "W"):
+            raise ValueError(f"Unsupported resource access mode: {self.mode}")
+
     def is_read(self) -> bool:
         return self.mode == "R"
 
@@ -55,6 +59,7 @@ class RetryPolicy:
     backoff_gamma: float
     retry_exceptions: Tuple[type, ...] = ()
     fallback: Optional[Callable[[Exception], Any]] = None
+    jitter: float = 0.0
 
 
 @dataclass
@@ -179,19 +184,58 @@ def build_plan_ir(
     registry: ToolRegistry,
     type_checker: Optional[Callable[[Optional[type], Optional[type]], bool]] = None,
 ) -> PlanIR:
-    node_map = {n.node_id: n for n in nodes}
-    data_edges: Set[Tuple[str, str]] = set()
-    for node in nodes:
-        for value in node.params.values():
-            if isinstance(value, dict) and value.get("ref"):
-                ref_node_id = value["ref"][0]
-                data_edges.add((ref_node_id, node.node_id))
+    node_map = {n.node_id: _normalize_node(n, registry) for n in nodes}
+    data_edges = _build_data_edges(node_map)
     data_order = _topological_order_from_edges(node_map.keys(), data_edges)
     resource_edges = _build_resource_edges(node_map, data_order, registry)
     plan = PlanIR(nodes=node_map, data_edges=data_edges, resource_edges=resource_edges)
     if not check_semantic_consistency(plan, registry, type_checker):
         raise ValueError("Semantic consistency check failed")
     return plan
+
+
+def _normalize_node(node: PlanNode, registry: ToolRegistry) -> PlanNode:
+    inferred_resources = registry.infer_resources(node.func)
+    merged_resources = tuple(sorted(set(node.resources) | inferred_resources, key=_resource_key))
+    inferred_effect = registry.infer_effect(node.func)
+    effect = node.effect if node.effect.dominates(inferred_effect) else inferred_effect
+    return PlanNode(
+        node_id=node.node_id,
+        func=node.func,
+        params=node.params,
+        effect=effect,
+        resources=merged_resources,
+        retry_policy=node.retry_policy,
+        idempotency_key=node.idempotency_key,
+        output_type=node.output_type,
+        compensation=node.compensation,
+    )
+
+
+def _resource_key(access: ResourceAccess) -> Tuple[str, str]:
+    return access.resource, access.mode
+
+
+def _build_data_edges(nodes: Dict[str, PlanNode]) -> Set[Tuple[str, str]]:
+    edges: Set[Tuple[str, str]] = set()
+    for node in nodes.values():
+        for ref_node_id in _collect_refs(node.params):
+            edges.add((ref_node_id, node.node_id))
+    return edges
+
+
+def _collect_refs(value: Any) -> Set[str]:
+    refs: Set[str] = set()
+    if isinstance(value, dict):
+        if value.get("ref"):
+            ref_node_id = value["ref"][0]
+            refs.add(ref_node_id)
+        for v in value.values():
+            refs.update(_collect_refs(v))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            refs.update(_collect_refs(v))
+    return refs
 
 
 def _topological_order_from_edges(nodes: Iterable[str], edges: Set[Tuple[str, str]]) -> List[str]:
@@ -222,12 +266,11 @@ def _build_resource_edges(
 ) -> Set[Tuple[str, str]]:
     ordering = {node_id: idx for idx, node_id in enumerate(data_order)}
     resource_edges: Set[Tuple[str, str]] = set()
-    for u_id, u in nodes.items():
-        for v_id, v in nodes.items():
-            if u_id == v_id:
-                continue
-            if ordering[u_id] >= ordering[v_id]:
-                continue
+    node_ids = sorted(nodes.keys(), key=lambda n: (ordering.get(n, 0), n))
+    for i, u_id in enumerate(node_ids):
+        u = nodes[u_id]
+        for v_id in node_ids[i + 1 :]:
+            v = nodes[v_id]
             if _resource_conflict(u, v, registry):
                 resource_edges.add((u_id, v_id))
     return resource_edges

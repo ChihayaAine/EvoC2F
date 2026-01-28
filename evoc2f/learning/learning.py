@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .plan_ir import PlanIR
+from ..core.plan_ir import PlanIR
 
 
 @dataclass
@@ -32,18 +31,20 @@ class CandidateExtractor:
         patterns = prefixspan(sequences, self.min_support)
         candidates: List[CandidateSkill] = []
         for pattern, support in patterns:
-            template = pattern
-            constraints = {"type_constraints": [], "contracts": []}
+            constraints = {
+                "type_constraints": [],
+                "contracts": [],
+                "min_support": support,
+            }
             candidates.append(
-                CandidateSkill(pattern=pattern, support=support, template=template, constraints=constraints)
+                CandidateSkill(
+                    pattern=pattern,
+                    support=support,
+                    template=list(pattern),
+                    constraints=constraints,
+                )
             )
-        merged: List[CandidateSkill] = []
-        for cand in candidates:
-            if not merged:
-                merged.append(cand)
-                continue
-            merged.append(cand)
-        return merged
+        return self._merge_templates(candidates)
 
     def anti_unify(self, a: List[str], b: List[str]) -> List[str]:
         length = max(len(a), len(b))
@@ -59,6 +60,34 @@ class CandidateExtractor:
 
     def canonicalize(self, plan: PlanIR) -> List[str]:
         return [plan.nodes[node_id].func.name for node_id in plan.topological_order()]
+
+    def _merge_templates(self, candidates: List[CandidateSkill]) -> List[CandidateSkill]:
+        merged: List[CandidateSkill] = []
+        for cand in candidates:
+            matched = False
+            for existing in merged:
+                if len(existing.template) != len(cand.template):
+                    continue
+                template = self.anti_unify(existing.template, cand.template)
+                if "*" not in template:
+                    existing.support = max(existing.support, cand.support)
+                    matched = True
+                    break
+                similarity = self._template_similarity(existing.template, cand.template)
+                if similarity >= 0.6:
+                    existing.template = template
+                    existing.support = max(existing.support, cand.support)
+                    matched = True
+                    break
+            if not matched:
+                merged.append(cand)
+        return merged
+
+    def _template_similarity(self, a: List[str], b: List[str]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        matches = sum(1 for x, y in zip(a, b) if x == y)
+        return matches / len(a)
 
 
 def prefixspan(sequences: Sequence[List[str]], min_support: float) -> List[Tuple[List[str], float]]:

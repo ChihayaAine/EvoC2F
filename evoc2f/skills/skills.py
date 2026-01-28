@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .plan_ir import Skill
+from ..core.plan_ir import Skill
 
 
 class SkillStatus(str, Enum):
@@ -27,6 +27,7 @@ class SkillLibrary:
     skills: Dict[str, Skill] = field(default_factory=dict)
     metrics: Dict[str, SkillMetrics] = field(default_factory=dict)
     canary_fraction: float = 0.1
+    min_success_rate: float = 0.95
 
     def add(self, skill: Skill) -> None:
         self.skills[skill.name] = skill
@@ -57,6 +58,15 @@ class SkillLibrary:
             return True
         return True
 
+    def should_execute(self, skill: Skill, rng: Optional[float] = None) -> bool:
+        if not self.eligible_for_execution(skill):
+            return False
+        if skill.status == SkillStatus.CANARY.value:
+            if rng is None:
+                return True
+            return rng <= self.canary_fraction
+        return True
+
     def record_usage(self, name: str, success: bool, cost: float, ts: float) -> None:
         metric = self.metrics.setdefault(name, SkillMetrics())
         metric.usage_count += 1
@@ -78,4 +88,9 @@ class SkillLibrary:
             return
         if metric.success_rate < min_success and name in self.skills:
             self.skills[name].status = SkillStatus.DEPRECATED.value
+
+    def refresh_deployments(self) -> None:
+        for name, metric in self.metrics.items():
+            if metric.success_rate < self.min_success_rate:
+                self.demote_if_needed(name, self.min_success_rate)
 

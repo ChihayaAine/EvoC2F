@@ -1,0 +1,24 @@
+You are verifying a candidate skill for admission to the skill library.
+
+Deliver:
+1) Functional tests:
+   - Nominal replay inputs from traces
+   - Boundary tests (empty, min/max, limits)
+   - Error tests (timeouts, 4xx/5xx, malformed)
+2) Contract checks:
+   - Pre-conditions and post-conditions
+   - Data invariants and schema compliance
+3) Regression guard:
+   - Define a held-out set
+   - Compare success rate vs baseline
+   - Report delta and decision rationale
+
+Output format (JSON):
+{
+  "functional_tests": [{"input": {...}, "expected": {...}}],
+  "boundary_tests": [{"input": {...}, "expected": {...}}],
+  "error_tests": [{"input": {...}, "expected_error": "Timeout"}],
+  "contracts": {"pre": ["..."], "post": ["..."]},
+  "regression": {"held_out": 50, "max_delta": 0.0, "delta": 0.0, "decision": "pass|fail"}
+}
+
