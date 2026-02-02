@@ -48,7 +48,7 @@ Here $f_v \in \mathcal{T} \cup \mathcal{S}$ identifies a tool or learned skill, 
 The edge set decomposes as $E = E_{\text{data}} \cup E_{\text{res}}$, capturing distinct dependency types. Data dependencies $E_{\text{data}} = \{(u, v) \mid \theta_v \text{ references } u\}$ encode explicit information flow. To construct resource dependencies, we first establish a per-resource ordering $\prec_r$ for each resource $r \in \mathcal{R}$ by computing a topological order of the data-dependency graph $(V, E_{\text{data}})$ with deterministic tie-breaking (e.g., stable hash on node identifiers). Resource dependencies arise from potential read-write and write-read conflicts on shared state:
 
 $$
-E_{\text{res}} = \left\{(u, v) \;\middle|\; \exists r: (r, a_u) \in \rho_u \land (r, a_v) \in \rho_v \land (a_u \neq a_v \land (a_u = \texttt{W} \lor a_v = \texttt{W})) \land u \prec_r v \right\}
+E_{\text{res}} = \{(u, v) \mid \exists r: (r, a_u) \in \rho_u \land (r, a_v) \in \rho_v \land (a_u \neq a_v \land (a_u = \texttt{W} \lor a_v = \texttt{W})) \land u \prec_r v\}
 $$
 
 This formulation serializes read-write and write-read conflicts while permitting concurrent read-read access. Write-write conflicts are additionally enforced through synchronization edges $E_{\text{sync}}$ introduced during compilation, ensuring a complete serialization chain for all writes to each resource.
@@ -101,7 +101,7 @@ where $\mathbf{e}_s, \mathbf{e}_q \in \mathbb{R}^d$ are embedding representation
 The planner $\mathcal{M}_\theta$ generates Plan IR autoregressively via constrained decoding that enforces the IR grammar:
 
 $$
-\pi^* = \argmax_{\pi \in \Pi_{\text{valid}}} P_\theta(\pi \mid \mathcal{C}_q)
+\pi^* = \arg\max_{\pi \in \Pi_{\text{valid}}} P_\theta(\pi \mid \mathcal{C}_q)
 $$
 
 where $\Pi_{\text{valid}}$ denotes the set of syntactically and semantically consistent plans.
@@ -130,7 +130,7 @@ The learning module continuously analyzes execution traces to extract reusable a
 **Candidate Extraction.** From successful trajectories, we identify candidate macro-skills through sequential pattern mining on canonicalized Plan IR traces. We canonicalize each DAG via topological linearization with deterministic tie-breaking, then apply PrefixSpan on linearized sequences. Let $\text{supp}(P) = |\{\tau \in \mathcal{D}: P \preceq \tau\}| / |\mathcal{D}|$ denote pattern support. High-support patterns with consistent data flow signatures are promoted to candidates. For structurally similar pattern families, we compute parameterized templates via anti-unification:
 
 $$
-\text{LGG}(P_1, P_2) = \argmin_{P:\, P_1 \unlhd P,\, P_2 \unlhd P} \text{Cost}(P)
+\text{LGG}(P_1, P_2) = \arg\min_{P:\, P_1 \unlhd P,\, P_2 \unlhd P} \text{Cost}(P)
 $$
 
 yielding the least general generalization, where $P_1 \unlhd P$ indicates $P$ generalizes $P_1$, and $\text{Cost}(P)$ measures complexity. Candidates failing $\textsf{Con}(\pi)$ after generalization are discarded.
