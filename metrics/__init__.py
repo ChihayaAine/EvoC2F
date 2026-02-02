@@ -2,6 +2,7 @@
 
 from .tracker import MetricTracker
 
+
 def new_tracker() -> MetricTracker:
     return MetricTracker()
 

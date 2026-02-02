@@ -134,6 +134,73 @@ class PlanIR:
         except ValueError:
             return False
 
+    def validate_refs(self) -> bool:
+        node_ids = set(self.nodes.keys())
+        for node in self.nodes.values():
+            for ref_id in _collect_refs(node.params):
+                if ref_id not in node_ids:
+                    return False
+        return True
+
+    def validate(self, registry: "ToolRegistry") -> bool:
+        if not self.validate_refs():
+            return False
+        return check_semantic_consistency(self, registry)
+
+    def to_dict(self) -> Dict[str, Any]:
+        nodes = []
+        for node in self.nodes.values():
+            nodes.append(
+                {
+                    "id": node.node_id,
+                    "tool": node.func.name,
+                    "params": node.params,
+                    "effect": {
+                        "side": node.effect.side_effect.value,
+                        "env": node.effect.environment.value,
+                    },
+                    "resources": [
+                        {"resource": r.resource, "mode": r.mode} for r in node.resources
+                    ],
+                    "retry": {
+                        "max": node.retry_policy.max_retries,
+                        "gamma": node.retry_policy.backoff_gamma,
+                        "jitter": node.retry_policy.jitter,
+                    },
+                    "idempotency_key": node.idempotency_key or "",
+                }
+            )
+        return {
+            "nodes": nodes,
+            "edges": {
+                "data": [{"src": u, "dst": v} for u, v in self.data_edges],
+                "resource": [{"src": u, "dst": v} for u, v in self.resource_edges],
+                "sync": [{"src": u, "dst": v} for u, v in self.sync_edges],
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any], registry: "ToolRegistry") -> "PlanIR":
+        nodes: List[PlanNode] = []
+        for node_payload in payload.get("nodes", []):
+            tool = registry.get(node_payload["tool"])
+            effect = _parse_effect(node_payload.get("effect"), tool.effect)
+            resources = _parse_resources(node_payload.get("resources"), tool.resources)
+            retry_policy = _parse_retry(node_payload.get("retry"))
+            node = PlanNode(
+                node_id=node_payload["id"],
+                func=tool,
+                params=node_payload.get("params", {}),
+                effect=effect,
+                resources=resources,
+                retry_policy=retry_policy,
+                idempotency_key=node_payload.get("idempotency_key"),
+                output_type=None,
+                compensation=tool.metadata.get("compensate"),
+            )
+            nodes.append(node)
+        return build_plan_ir(nodes, registry)
+
 
 class ToolRegistry:
     def __init__(self) -> None:
@@ -148,9 +215,10 @@ class ToolRegistry:
         return self._tools[name]
 
     def infer_resources(self, tool: Tool) -> Set[ResourceAccess]:
+        declared = set(tool.resources) | _metadata_resources(tool.metadata)
         if tool.name in self._resource_overrides:
-            return set(self._resource_overrides[tool.name]) | set(tool.resources)
-        return set(tool.resources)
+            return set(self._resource_overrides[tool.name]) | declared
+        return declared
 
     def infer_effect(self, tool: Tool) -> EffectType:
         if tool.name in self._effect_overrides:
@@ -228,14 +296,57 @@ def _collect_refs(value: Any) -> Set[str]:
     refs: Set[str] = set()
     if isinstance(value, dict):
         if value.get("ref"):
-            ref_node_id = value["ref"][0]
-            refs.add(ref_node_id)
+            ref = value["ref"]
+            if isinstance(ref, (list, tuple)) and ref:
+                refs.add(str(ref[0]))
         for v in value.values():
             refs.update(_collect_refs(v))
     elif isinstance(value, (list, tuple)):
         for v in value:
             refs.update(_collect_refs(v))
     return refs
+
+
+def _parse_effect(payload: Optional[Dict[str, str]], fallback: EffectType) -> EffectType:
+    if not payload:
+        return fallback
+    side = payload.get("side", fallback.side_effect.value)
+    env = payload.get("env", fallback.environment.value)
+    return EffectType(
+        side_effect=SideEffect(side),
+        environment=Environment(env),
+    )
+
+
+def _parse_resources(
+    payload: Optional[List[Dict[str, str]]],
+    fallback: Tuple[ResourceAccess, ...],
+) -> Tuple[ResourceAccess, ...]:
+    if not payload:
+        return fallback
+    return tuple(ResourceAccess(resource=r["resource"], mode=r.get("mode", "R")) for r in payload)
+
+
+def _parse_retry(payload: Optional[Dict[str, Any]]) -> RetryPolicy:
+    if not payload:
+        return RetryPolicy(max_retries=2, backoff_gamma=2.0)
+    return RetryPolicy(
+        max_retries=int(payload.get("max", 2)),
+        backoff_gamma=float(payload.get("gamma", 2.0)),
+        jitter=float(payload.get("jitter", 0.0)),
+    )
+
+
+def _metadata_resources(metadata: Dict[str, Any]) -> Set[ResourceAccess]:
+    resources = metadata.get("resources")
+    if not isinstance(resources, list):
+        return set()
+    parsed: Set[ResourceAccess] = set()
+    for res in resources:
+        if not isinstance(res, dict) or "resource" not in res:
+            continue
+        parsed.add(ResourceAccess(resource=res["resource"], mode=res.get("mode", "R")))
+    return parsed
 
 
 def _topological_order_from_edges(nodes: Iterable[str], edges: Set[Tuple[str, str]]) -> List[str]:

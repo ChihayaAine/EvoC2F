@@ -8,5 +8,16 @@ def build_stub(response: str = "", latency_ms: float = 0.0) -> LocalModelStub:
     return LocalModelStub(fixed_response=response, latency_ms=latency_ms)
 
 
-__all__ = ["BaseModel", "ModelRequest", "ModelResponse", "LocalModelStub", "build_stub"]
+def build_echo_stub(latency_ms: float = 0.0) -> LocalModelStub:
+    return LocalModelStub(fixed_response="", latency_ms=latency_ms, echo_prompt=True)
+
+
+__all__ = [
+    "BaseModel",
+    "ModelRequest",
+    "ModelResponse",
+    "LocalModelStub",
+    "build_stub",
+    "build_echo_stub",
+]
 

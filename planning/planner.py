@@ -13,7 +13,7 @@ from core.plan_ir import (
     ToolRegistry,
     build_plan_ir,
 )
-from skills.skills import SkillLibrary
+from skills.skills import SkillLibrary, SkillStatus
 from utils.math import cosine_similarity, MLP
 
 
@@ -21,6 +21,7 @@ from utils.math import cosine_similarity, MLP
 class PlannerConfig:
     top_k_skills: int = 5
     default_retry: RetryPolicy = RetryPolicy(max_retries=2, backoff_gamma=2.0)
+    include_shadow: bool = True
 
 
 class SkillAugmentedPlanner:
@@ -40,6 +41,8 @@ class SkillAugmentedPlanner:
     ) -> List[Tool]:
         scored: List[Tuple[float, Tool]] = []
         for skill in self.library.active_skills():
+            if not self.config.include_shadow and skill.status == SkillStatus.SHADOW.value:
+                continue
             embedding = skill_embeddings.get(skill.name, [])
             if not embedding or not query_embedding:
                 semantic = 0.0

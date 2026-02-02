@@ -1,5 +1,5 @@
-from .skill_registry import InMemorySkillRegistry
-from .tool_registry import InMemoryToolRegistry
+from .skill_registry import InMemorySkillRegistry, RegistryStats
+from .tool_registry import InMemoryToolRegistry, ToolRegistryStats
 
 
 def default_skill_registry() -> InMemorySkillRegistry:
@@ -12,6 +12,8 @@ def default_tool_registry() -> InMemoryToolRegistry:
 __all__ = [
     "InMemorySkillRegistry",
     "InMemoryToolRegistry",
+    "RegistryStats",
+    "ToolRegistryStats",
     "default_skill_registry",
     "default_tool_registry",
 ]

@@ -8,17 +8,32 @@ Deliver:
 2) Contract checks:
    - Pre-conditions and post-conditions
    - Data invariants and schema compliance
+   - Side-effect constraints and idempotency checks
 3) Regression guard:
    - Define a held-out set
    - Compare success rate vs baseline
    - Report delta and decision rationale
+4) Coverage summary:
+   - Count of tests per category
+   - Known gaps or assumptions
 
 Output format (JSON):
 {
   "functional_tests": [{"input": {...}, "expected": {...}}],
   "boundary_tests": [{"input": {...}, "expected": {...}}],
   "error_tests": [{"input": {...}, "expected_error": "Timeout"}],
-  "contracts": {"pre": ["..."], "post": ["..."]},
-  "regression": {"held_out": 50, "max_delta": 0.0, "delta": 0.0, "decision": "pass|fail"}
+  "contracts": {
+    "pre": ["..."],
+    "post": ["..."],
+    "invariants": ["..."],
+    "idempotency": ["..."]
+  },
+  "regression": {
+    "held_out": 50,
+    "max_delta": 0.0,
+    "delta": 0.0,
+    "decision": "pass|fail"
+  },
+  "coverage": {"functional": 0, "boundary": 0, "error": 0, "notes": ["..."]}
 }
 

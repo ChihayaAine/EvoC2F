@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Dict, List
+from typing import Dict, Iterable, List, Optional, Tuple
 
 
 @dataclass
@@ -41,6 +41,15 @@ class MetricTracker:
             "avg": float(sum(values) / len(values)),
         }
 
+    def summary_with_percentiles(self, name: str, percentiles: Iterable[float]) -> Dict[str, float]:
+        values = sorted(self.histograms.get(name, []))
+        if not values:
+            return {"count": 0.0, "min": 0.0, "max": 0.0, "avg": 0.0}
+        summary = self.summary(name)
+        for p in percentiles:
+            summary[f"p{int(p * 100)}"] = _percentile(values, p)
+        return summary
+
     def merge(self, other: "MetricTracker") -> None:
         for key, value in other.counters.items():
             self.counters[key] = self.counters.get(key, 0) + value
@@ -53,4 +62,32 @@ class MetricTracker:
         self.counters.clear()
         self.gauges.clear()
         self.histograms.clear()
+
+    def top_counters(self, k: int = 5) -> List[Tuple[str, int]]:
+        return sorted(self.counters.items(), key=lambda kv: kv[1], reverse=True)[:k]
+
+    def snapshot(self) -> Dict[str, Dict[str, float]]:
+        return {
+            "counters": dict(self.counters),
+            "gauges": dict(self.gauges),
+            "histograms": {k: list(v) for k, v in self.histograms.items()},
+        }
+
+    def load(self, payload: Dict[str, Dict[str, float]]) -> None:
+        self.counters.update({k: int(v) for k, v in payload.get("counters", {}).items()})
+        self.gauges.update({k: float(v) for k, v in payload.get("gauges", {}).items()})
+        for key, values in payload.get("histograms", {}).items():
+            if isinstance(values, list):
+                self.histograms[key] = [float(v) for v in values]
+
+
+def _percentile(sorted_values: List[float], p: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if p <= 0:
+        return float(sorted_values[0])
+    if p >= 1:
+        return float(sorted_values[-1])
+    idx = int(round((len(sorted_values) - 1) * p))
+    return float(sorted_values[idx])
 

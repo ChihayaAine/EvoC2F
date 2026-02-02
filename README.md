@@ -56,13 +56,23 @@ This formulation serializes read-write and write-read conflicts while permitting
 
 **Annotation Inference.** The resource footprint $\rho_v$ and effect type $\epsilon_v$ are derived from tool schema declarations and wrapper specifications. We define $\text{Infer}(f_v)$ as the union of all resource accesses declared in the schema or wrapper metadata for tool/skill $f_v$. For tools with incomplete or uncertain annotations, we apply a conservative policy: unknown side-effects default to $\texttt{write}$, and unknown environment defaults to $\texttt{external}$, ensuring that under-specified tools are serialized rather than incorrectly parallelized. Trace-based analysis of historical executions is used only to monotonically expand (never shrink) the declared footprints, maintaining soundness. Runtime guards detect and log any undeclared resource accesses for future refinement.
 
-**Semantic Consistency.** A plan $\pi = (V, E, \mathcal{C})$ is semantically consistent, denoted $\textsf{Con}(\pi)$, iff: (i) $(V, E)$ is acyclic; (ii) $\forall (u,v) \in E_{\text{data}}: \text{type}(u.\text{out}) \preceq \text{type}(v.\text{in})$; (iii) $\forall v: \rho_v \supseteq \text{Infer}(f_v)$; (iv) side-effects respect the lattice $\texttt{pure} \prec \texttt{read} \prec \texttt{write}$; (v) $\forall v: e_{\text{se}}(v) \neq \texttt{pure} \Rightarrow \kappa_v \neq \varnothing$.
+**Semantic Consistency.** A plan $\pi = (V, E, \mathcal{C})$ is semantically consistent, denoted $\textsf{Con}(\pi)$, iff:
+
+$$
+\begin{aligned}
+&\text{(i)}\ (V, E)\ \text{is acyclic}; \\
+&\text{(ii)}\ \forall (u,v) \in E_{\text{data}}: \text{type}(u.\text{out}) \preceq \text{type}(v.\text{in}); \\
+&\text{(iii)}\ \forall v: \rho_v \supseteq \text{Infer}(f_v); \\
+&\text{(iv)}\ \text{side-effects respect the lattice } \texttt{pure} \prec \texttt{read} \prec \texttt{write}; \\
+&\text{(v)}\ \forall v: e_{\text{se}}(v) \neq \texttt{pure} \Rightarrow \kappa_v \neq \varnothing.
+\end{aligned}
+$$
 
 ### Semantic Plan Compiler
 
 The compiler transforms semantically consistent Plan IR into optimized execution schedules through a two-phase process: compile-time dependency resolution and runtime resource coordination.
 
-**Compile-Time Scheduling.** We first construct the augmented dependency graph $G = (V, E \cup E_{\text{sync}})$. For each resource $r \in \mathcal{R}$, let $V_r^W = \{v \in V \mid (r, \texttt{W}) \in \rho_v\}$ denote nodes with write access. We compute a per-resource serial chain by ordering $V_r^W$ according to the same topological order used to establish $\prec_r$ (i.e., on $(V, E_{\text{data}})$), then adding synchronization edges $E_{\text{sync}}^r$ to enforce this chain. The combined synchronization edges $E_{\text{sync}} = \bigcup_r E_{\text{sync}}^r$ do not introduce cycles since they respect the underlying data-dependency order.
+**Compile-Time Scheduling.** We first construct the augmented dependency graph $G = (V, E \cup E_{\text{sync}})$. For each resource $r \in \mathcal{R}$, let $V_r^W = \{v \in V \mid (r, \texttt{W}) \in \rho_v\}$ denote nodes with write access. We compute a per-resource serial chain by ordering $V_r^W$ according to the same topological order used to establish $\prec_r$, i.e., on the data-dependency graph $(V, E_{\text{data}})$, then adding synchronization edges $E_{\text{sync}}^r$ to enforce this chain. The combined synchronization edges $E_{\text{sync}} = \bigcup_r E_{\text{sync}}^r$ do not introduce cycles since they respect the underlying data-dependency order.
 
 Let $s_v \in \mathbb{R}^+$ denote the scheduled start time of node $v$. The earliest start time (EST) and latest start time (LST) are computed via forward and backward passes:
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+import random
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -13,28 +14,55 @@ class StepResult:
 
 
 class BaseEnvironment:
-    def __init__(self) -> None:
+    def __init__(self, max_steps: Optional[int] = None) -> None:
         self._step_count = 0
+        self._max_steps = max_steps
+        self._rng = random.Random()
+        self._last_observation: Any = None
 
     def reset(self) -> Any:
-        raise NotImplementedError
+        self._step_count = 0
+        self._last_observation = self._reset_impl()
+        return self._last_observation
 
     def step(self, action: Any) -> StepResult:
         self._step_count += 1
-        raise NotImplementedError
+        result = self._step_impl(action)
+        if result is None:
+            result = StepResult(observation=self._last_observation, reward=0.0, done=True)
+        if self._max_steps is not None and self._step_count >= self._max_steps:
+            result.done = True
+        self._last_observation = result.observation
+        return result
 
     def seed(self, seed: int) -> None:
-        raise NotImplementedError
+        self._rng.seed(seed)
+        self._seed_impl(seed)
 
     def render(self) -> Optional[str]:
-        return None
+        return self._render_impl()
 
     def close(self) -> None:
-        return None
+        self._close_impl()
 
     @property
     def step_count(self) -> int:
         return self._step_count
+
+    def _reset_impl(self) -> Any:
+        return None
+
+    def _step_impl(self, action: Any) -> Optional[StepResult]:
+        return StepResult(observation=self._last_observation, reward=0.0, done=True)
+
+    def _seed_impl(self, seed: int) -> None:
+        return None
+
+    def _render_impl(self) -> Optional[str]:
+        return None
+
+    def _close_impl(self) -> None:
+        return None
 
 
 @dataclass

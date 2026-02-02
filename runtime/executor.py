@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from core.compiler import CompiledPlan, ScheduledNode, TokenBucket
-from core.plan_ir import PlanIR, PlanNode, ResourceAccess, RetryPolicy, ToolRegistry
+from core.plan_ir import PlanIR, PlanNode, ResourceAccess, RetryPolicy, Skill, ToolRegistry
 
 
 @dataclass
@@ -19,6 +19,10 @@ class ExecutionConfig:
     jitter: float = 0.0
     circuit_breaker_window: int = 10
     circuit_breaker_threshold: float = 0.5
+    circuit_breaker_cooldown_s: float = 5.0
+    allow_shadow_execution: bool = False
+    idempotency_ttl_s: float = 300.0
+    max_duration_ms: Optional[float] = None
 
 
 @dataclass
@@ -28,13 +32,23 @@ class ExecutionResult:
     duration_ms: float
     traces: List[Dict[str, Any]]
 
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "success": not self.failures,
+            "outputs": len(self.outputs),
+            "failures": len(self.failures),
+            "duration_ms": self.duration_ms,
+        }
+
 
 class CircuitBreaker:
-    def __init__(self, window: int, threshold: float) -> None:
+    def __init__(self, window: int, threshold: float, cooldown_s: float) -> None:
         self.window = window
         self.threshold = threshold
+        self.cooldown_s = cooldown_s
         self.history: List[bool] = []
         self.open = False
+        self.opened_at: Optional[float] = None
 
     def record(self, success: bool) -> None:
         self.history.append(success)
@@ -43,9 +57,20 @@ class CircuitBreaker:
         if len(self.history) == self.window:
             failure_rate = 1.0 - (sum(self.history) / self.window)
             self.open = failure_rate >= self.threshold
+            if self.open:
+                self.opened_at = time.time()
 
     def allow(self) -> bool:
-        return not self.open
+        if not self.open:
+            return True
+        if self.opened_at is None:
+            return False
+        if (time.time() - self.opened_at) >= self.cooldown_s:
+            self.open = False
+            self.history.clear()
+            self.opened_at = None
+            return True
+        return False
 
 
 class RWLock:
@@ -103,6 +128,7 @@ class Executor:
         self._resource_locks: Dict[str, RWLock] = {}
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         self._token_buckets: Dict[str, TokenBucket] = {}
+        self._idempotency_cache: Dict[str, Tuple[float, Any]] = {}
 
     def execute(self, compiled: CompiledPlan) -> ExecutionResult:
         plan = compiled.plan
@@ -124,6 +150,12 @@ class Executor:
 
         with ThreadPoolExecutor(max_workers=self.config.concurrency_limit) as executor:
             while (pending or in_flight) and not failure_event.is_set():
+                if self.config.max_duration_ms is not None:
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    if elapsed_ms > self.config.max_duration_ms:
+                        failures["__timeout__"] = TimeoutError("execution timeout")
+                        failure_event.set()
+                        break
                 while ready and len(in_flight) < self.config.concurrency_limit:
                     node_id = self._select_ready_node(ready, compiled)
                     if not self._is_schedule_ready(node_id, compiled, start_time):
@@ -167,6 +199,8 @@ class Executor:
                         failure_event.set()
                         break
             if failure_event.is_set():
+                for future in list(in_flight.keys()):
+                    future.cancel()
                 self._compensate(plan, executed, outputs, traces)
         duration_ms = (time.time() - start_time) * 1000
         return ExecutionResult(
@@ -179,13 +213,25 @@ class Executor:
             CircuitBreaker(
                 window=self.config.circuit_breaker_window,
                 threshold=self.config.circuit_breaker_threshold,
+                cooldown_s=self.config.circuit_breaker_cooldown_s,
             ),
         )
         if not breaker.allow():
             raise RuntimeError(f"Circuit open for {node.func.name}")
         params = self._resolve_params(node.params, outputs)
+        if isinstance(node.func, Skill):
+            if node.func.status == "deprecated":
+                raise RuntimeError(f"Skill {node.func.name} is deprecated")
+            if node.func.status == "shadow" and not self.config.allow_shadow_execution:
+                fallback = node.func.metadata.get("shadow_fallback")
+                if callable(fallback):
+                    return fallback(params)
+                raise RuntimeError(f"Shadow skill {node.func.name} missing fallback")
         if node.idempotency_key and "__idempotency_key" not in params:
             params["__idempotency_key"] = node.idempotency_key
+        cached = self._lookup_idempotency(node.idempotency_key)
+        if cached is not None:
+            return cached
         attempt = 0
         while True:
             try:
@@ -194,6 +240,7 @@ class Executor:
                 result = node.func.signature(**params)
                 self._detect_undeclared_access(node, result)
                 breaker.record(True)
+                self._store_idempotency(node.idempotency_key, result)
                 return result
             except Exception as exc:
                 breaker.record(False)
@@ -209,15 +256,7 @@ class Executor:
                 self._release_locks(node.resources)
 
     def _resolve_params(self, params: Dict[str, Any], outputs: Dict[str, Any]) -> Dict[str, Any]:
-        resolved = {}
-        for key, value in params.items():
-            if isinstance(value, dict) and value.get("ref"):
-                node_id, field = value["ref"]
-                data = outputs[node_id]
-                resolved[key] = data[field] if field else data
-            else:
-                resolved[key] = value
-        return resolved
+        return _resolve_value(params, outputs)
 
     def _resource_lock(self, resource: str) -> RWLock:
         if resource not in self._resource_locks:
@@ -327,4 +366,37 @@ class Executor:
                         "error": str(exc),
                     }
                 )
+
+    def _lookup_idempotency(self, key: Optional[str]) -> Optional[Any]:
+        if not key:
+            return None
+        cached = self._idempotency_cache.get(key)
+        if not cached:
+            return None
+        ts, value = cached
+        if (time.time() - ts) > self.config.idempotency_ttl_s:
+            self._idempotency_cache.pop(key, None)
+            return None
+        return value
+
+    def _store_idempotency(self, key: Optional[str], value: Any) -> None:
+        if not key:
+            return
+        self._idempotency_cache[key] = (time.time(), value)
+
+
+def _resolve_value(value: Any, outputs: Dict[str, Any]) -> Any:
+    if isinstance(value, dict) and value.get("ref"):
+        ref = value["ref"]
+        node_id = ref[0] if isinstance(ref, (list, tuple)) and ref else None
+        field = ref[1] if isinstance(ref, (list, tuple)) and len(ref) > 1 else None
+        data = outputs.get(node_id)
+        if data is None:
+            return None
+        return data[field] if field else data
+    if isinstance(value, dict):
+        return {k: _resolve_value(v, outputs) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_value(v, outputs) for v in value]
+    return value
 

@@ -31,6 +31,9 @@ class CompiledPlan:
     slack: Dict[str, float] = field(default_factory=dict)
     rate_penalty: float = 0.0
     retry_penalty: float = 0.0
+    makespan_ms: float = 0.0
+    deadline_violation: bool = False
+    schedule_errors: List[str] = field(default_factory=list)
 
 
 class SemanticCompiler:
@@ -46,6 +49,8 @@ class SemanticCompiler:
         slack = {n: lst[n] - est[n] for n in plan.nodes}
         rate_penalty = self._rate_penalty(plan, schedule)
         retry_penalty = self._retry_penalty(plan)
+        makespan = self._makespan(schedule)
+        errors = self._validate_schedule(plan, schedule)
         return CompiledPlan(
             plan=plan,
             schedule=schedule,
@@ -55,6 +60,9 @@ class SemanticCompiler:
             slack=slack,
             rate_penalty=rate_penalty,
             retry_penalty=retry_penalty,
+            makespan_ms=makespan,
+            deadline_violation=makespan > self.config.deadline_ms,
+            schedule_errors=errors,
         )
 
     def _build_sync_edges(self, plan: PlanIR) -> Set[Tuple[str, str]]:
@@ -190,19 +198,19 @@ class SemanticCompiler:
     ) -> Optional[float]:
         node = plan.nodes[node_id]
         start = earliest
-        backoff = 1.0
+        duration = node.func.expected_latency_ms
         while start <= self.config.deadline_ms:
-            if not self._respects_concurrency(start, node.func.expected_latency_ms, schedule):
-                start += backoff
-                backoff *= 2
+            if not self._respects_concurrency(start, duration, schedule):
+                start = self._next_concurrency_time(start, duration, schedule)
                 continue
             if not self._respects_resource_conflicts(plan, node, start, schedule):
-                start += backoff
-                backoff *= 2
+                start = self._next_resource_time(plan, node, start, schedule)
                 continue
-            if not self._respects_rate_limits(node, start, buckets):
-                start += backoff
-                backoff *= 2
+            token_time = self._next_rate_time(node, start, buckets)
+            if token_time is None:
+                return None
+            if token_time > start:
+                start = token_time
                 continue
             return start
         return None
@@ -242,6 +250,21 @@ class SemanticCompiler:
                 return False
         return True
 
+    def _next_rate_time(
+        self, node: PlanNode, start: float, buckets: Dict[str, "TokenBucket"]
+    ) -> Optional[float]:
+        next_time = start
+        for access in node.resources:
+            bucket = buckets.get(access.resource)
+            if not bucket:
+                continue
+            candidate = bucket.next_available_time(start)
+            if candidate is None:
+                return None
+            if candidate > next_time:
+                next_time = candidate
+        return next_time
+
     def _reserve_rate_tokens(
         self, node: PlanNode, start: float, buckets: Dict[str, "TokenBucket"]
     ) -> None:
@@ -249,6 +272,35 @@ class SemanticCompiler:
             bucket = buckets.get(access.resource)
             if bucket:
                 bucket.consume_at(start)
+
+    def _next_concurrency_time(
+        self, start: float, duration: float, schedule: Dict[str, ScheduledNode]
+    ) -> float:
+        end = start + duration
+        overlaps = [
+            item.end_ms
+            for item in schedule.values()
+            if self._interval_overlap(start, end, item.start_ms, item.end_ms)
+        ]
+        if not overlaps:
+            return start + 1.0
+        return min(overlaps)
+
+    def _next_resource_time(
+        self, plan: PlanIR, node: PlanNode, start: float, schedule: Dict[str, ScheduledNode]
+    ) -> float:
+        duration = node.func.expected_latency_ms
+        end = start + duration
+        conflicts = []
+        for scheduled in schedule.values():
+            if not self._interval_overlap(start, end, scheduled.start_ms, scheduled.end_ms):
+                continue
+            other = plan.nodes[scheduled.node_id]
+            if _conflict(node.resources, other.resources):
+                conflicts.append(scheduled.end_ms)
+        if not conflicts:
+            return start + 1.0
+        return min(conflicts)
 
     def _rate_penalty(self, plan: PlanIR, schedule: Dict[str, ScheduledNode]) -> float:
         window_ms = 1000.0
@@ -277,6 +329,28 @@ class SemanticCompiler:
             expected_retries = node.retry_policy.max_retries * failure_prob
             penalty += failure_prob * expected_retries * node.func.expected_latency_ms
         return penalty
+
+    def _makespan(self, schedule: Dict[str, ScheduledNode]) -> float:
+        if not schedule:
+            return 0.0
+        return max(node.end_ms for node in schedule.values())
+
+    def _validate_schedule(self, plan: PlanIR, schedule: Dict[str, ScheduledNode]) -> List[str]:
+        errors: List[str] = []
+        if set(schedule.keys()) != set(plan.nodes.keys()):
+            errors.append("schedule_missing_nodes")
+        for u, v in plan.all_edges():
+            if u in schedule and v in schedule:
+                if schedule[u].end_ms > schedule[v].start_ms:
+                    errors.append(f"dependency_violation:{u}->{v}")
+        nodes = list(schedule.values())
+        for i, a in enumerate(nodes):
+            for b in nodes[i + 1 :]:
+                if not self._interval_overlap(a.start_ms, a.end_ms, b.start_ms, b.end_ms):
+                    continue
+                if _conflict(plan.nodes[a.node_id].resources, plan.nodes[b.node_id].resources):
+                    errors.append(f"resource_conflict:{a.node_id}:{b.node_id}")
+        return errors
 
 
 def _conflict(a: Tuple[ResourceAccess, ...], b: Tuple[ResourceAccess, ...]) -> bool:
@@ -316,4 +390,13 @@ class TokenBucket:
 
     def consume_at(self, t: float) -> bool:
         return self.consume(t)
+
+    def next_available_time(self, t: float) -> Optional[float]:
+        self._refill(t)
+        if self.tokens >= 1.0:
+            return t
+        if self.rate <= 0:
+            return None
+        missing = 1.0 - self.tokens
+        return t + (missing / self.rate)
 

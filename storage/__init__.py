@@ -1,10 +1,11 @@
 """Storage adapters."""
 
-from .json_store import JsonStore
-
-def open_store(path: str) -> JsonStore:
-    return JsonStore(path)
+from .json_store import JsonStore, StoreConfig
 
 
-__all__ = ["JsonStore", "open_store"]
+def open_store(path: str, config: StoreConfig | None = None) -> JsonStore:
+    return JsonStore(path, config=config)
+
+
+__all__ = ["JsonStore", "StoreConfig", "open_store"]
 

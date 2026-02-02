@@ -1,5 +1,5 @@
 from .base import TaskResult, TaskRunner, TaskSpec, TaskSuite
-from .runner import FunctionTaskRunner
+from .runner import BatchTaskRunner, FunctionTaskRunner, RetryTaskRunner, TimeoutTaskRunner
 
 
 def build_function_task(
@@ -25,6 +25,9 @@ __all__ = [
     "TaskSpec",
     "TaskSuite",
     "FunctionTaskRunner",
+    "RetryTaskRunner",
+    "TimeoutTaskRunner",
+    "BatchTaskRunner",
     "build_function_task",
 ]
 
