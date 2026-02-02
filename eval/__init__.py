@@ -1,3 +1,5 @@
+"""Evaluation utilities."""
+
 from .runner import EvalResult, Evaluator
 
 def evaluate_inputs(runner, inputs) -> EvalResult:

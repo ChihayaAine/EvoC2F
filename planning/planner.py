@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..core.plan_ir import (
+from core.plan_ir import (
     EffectType,
     PlanIR,
     PlanNode,
@@ -13,8 +13,8 @@ from ..core.plan_ir import (
     ToolRegistry,
     build_plan_ir,
 )
-from ..skills.skills import SkillLibrary
-from ..utils.math import cosine_similarity, MLP
+from skills.skills import SkillLibrary
+from utils.math import cosine_similarity, MLP
 
 
 @dataclass

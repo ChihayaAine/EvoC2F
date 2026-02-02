@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from .skills import SkillLibrary, SkillStatus
-from ..policies.gating import GatingPolicy
+from policies.gating import GatingPolicy
 
 
 @dataclass

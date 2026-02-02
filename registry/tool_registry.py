@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List
 
-from ..tools.base import ToolSpec
+from tools.base import ToolSpec
 
 
 class InMemoryToolRegistry:

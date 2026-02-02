@@ -6,8 +6,8 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
-from ..core.compiler import CompiledPlan, ScheduledNode, TokenBucket
-from ..core.plan_ir import PlanIR, PlanNode, ResourceAccess, RetryPolicy, ToolRegistry
+from core.compiler import CompiledPlan, ScheduledNode, TokenBucket
+from core.plan_ir import PlanIR, PlanNode, ResourceAccess, RetryPolicy, ToolRegistry
 
 
 @dataclass

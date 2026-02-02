@@ -32,6 +32,8 @@ from .planning.planner import (
     PlannerConfig,
     SkillAugmentedPlanner,
 )
+from .configs.defaults import Defaults, RuntimeLimits
+from .api.service import EvoC2FService, ServiceConfig
 from .verification.verification import (
     VerificationConfig,
     VerificationReport,
@@ -65,6 +67,10 @@ __all__ = [
     "SkillStatus",
     "PlannerConfig",
     "SkillAugmentedPlanner",
+    "Defaults",
+    "RuntimeLimits",
+    "EvoC2FService",
+    "ServiceConfig",
     "VerificationConfig",
     "VerificationReport",
     "SkillVerifier",
@@ -72,4 +78,15 @@ __all__ = [
     "CandidateExtractor",
     "PreferenceLearner",
 ]
+
+
+def build_service(registry: ToolRegistry, skills: SkillLibrary) -> EvoC2FService:
+    defaults = Defaults()
+    limits = RuntimeLimits()
+    config = ServiceConfig(
+        compiler=defaults.compiler(limits),
+        executor=defaults.executor(limits),
+        planner=defaults.planner(),
+    )
+    return EvoC2FService(registry=registry, skills=skills, config=config)
 

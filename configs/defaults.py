@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict
 
-from ..core.compiler import CompilerConfig
-from ..planning.planner import PlannerConfig
-from ..runtime.executor import ExecutionConfig
-from ..verification.verification import VerificationConfig
+from core.compiler import CompilerConfig
+from planning.planner import PlannerConfig
+from runtime.executor import ExecutionConfig
+from verification.verification import VerificationConfig
 
 
 @dataclass

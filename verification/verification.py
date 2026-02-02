@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from ..core.plan_ir import Skill
+from core.plan_ir import Skill
 
 
 @dataclass

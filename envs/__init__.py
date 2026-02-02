@@ -1,3 +1,5 @@
+"""Environment abstractions."""
+
 from .base import BaseEnvironment, EpisodeTrace, StepResult
 
 

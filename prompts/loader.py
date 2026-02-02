@@ -19,6 +19,16 @@ class PromptLoader:
         self._cache[name] = content
         return content
 
+    def render(self, name: str, variables: Dict[str, str]) -> str:
+        template = self.load(name)
+        return template.format(**variables)
+
+    def load_optional(self, name: str, default: str = "") -> str:
+        path = self.root / "templates" / name
+        if not path.exists():
+            return default
+        return self.load(name)
+
     def list(self) -> Dict[str, str]:
         templates = {}
         for file in (self.root / "templates").glob("*.txt"):

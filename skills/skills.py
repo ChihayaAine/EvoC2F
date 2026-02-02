@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from ..core.plan_ir import Skill
+from core.plan_ir import Skill
 
 
 class SkillStatus(str, Enum):

@@ -1,3 +1,5 @@
+"""Storage adapters."""
+
 from .json_store import JsonStore
 
 def open_store(path: str) -> JsonStore:

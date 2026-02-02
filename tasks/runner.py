@@ -14,9 +14,17 @@ class FunctionTaskRunner(TaskRunner):
     def run(self, payload: Dict[str, Any]) -> TaskResult:
         self.validate(payload)
         start = perf_counter()
-        output = self.handler(payload)
+        try:
+            output = self.handler(payload)
+            success = output.get("success", True)
+            error = None
+        except Exception as exc:
+            output = {"success": False, "error": str(exc)}
+            success = False
+            error = str(exc)
         elapsed = (perf_counter() - start) * 1000
-        success = output.get("success", True)
         metrics = {"latency_ms": elapsed}
+        if error:
+            metrics["error"] = error
         return TaskResult(output=output, success=bool(success), metrics=metrics)
 

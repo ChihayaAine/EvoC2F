@@ -3,6 +3,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from core.plan_ir import RetryPolicy
+
 
 @dataclass
 class RetryPolicyConfig:
@@ -15,4 +17,11 @@ class RetryPolicyConfig:
         if self.jitter:
             delay *= 1.0 + random.uniform(-self.jitter, self.jitter)
         return max(0.0, delay)
+
+    def as_retry_policy(self) -> RetryPolicy:
+        return RetryPolicy(
+            max_retries=self.max_retries,
+            backoff_gamma=self.backoff_gamma,
+            jitter=self.jitter,
+        )
 

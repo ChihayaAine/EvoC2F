@@ -1,3 +1,5 @@
+"""Experience buffers for offline learning."""
+
 from .buffer import ExperienceBuffer
 
 def new_buffer(capacity: int = 1000) -> ExperienceBuffer:

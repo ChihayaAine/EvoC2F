@@ -11,6 +11,9 @@ class TraceEvent:
     timestamp: float
     payload: Dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {"name": self.name, "timestamp": self.timestamp, "payload": self.payload}
+
 
 class TraceStore:
     def __init__(self) -> None:
@@ -26,6 +29,9 @@ class TraceStore:
 
     def filter(self, name: str) -> List[TraceEvent]:
         return [event for event in self._events if event.name == name]
+
+    def export(self) -> List[Dict[str, Any]]:
+        return [event.to_dict() for event in self._events]
 
     def since(self, timestamp: float) -> List[TraceEvent]:
         return [event for event in self._events if event.timestamp >= timestamp]

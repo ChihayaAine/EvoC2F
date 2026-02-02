@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 
-from ..datasets.loader import JsonlDataset
-from ..eval.runner import Evaluator
-from ..tasks.base import TaskSpec
-from ..tasks.runner import FunctionTaskRunner
+from datasets.loader import JsonlDataset
+from eval.runner import Evaluator
+from tasks.base import TaskSpec
+from tasks.runner import FunctionTaskRunner
 
 
 def build_parser() -> argparse.ArgumentParser:

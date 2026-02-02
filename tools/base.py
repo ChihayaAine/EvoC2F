@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..core.plan_ir import EffectType, Environment, ResourceAccess, SideEffect, Tool
-from ..schemas.json_schema import SchemaValidator
+from core.plan_ir import EffectType, Environment, ResourceAccess, SideEffect, Tool
+from schemas.json_schema import SchemaValidator
 
 
 @dataclass
@@ -22,6 +22,18 @@ class ToolSpec:
     owner: str = "system"
     timeout_ms: int = 0
     deprecated: bool = False
+
+    def validate(self) -> None:
+        if not self.name:
+            raise ValueError("ToolSpec name required")
+        if not isinstance(self.input_schema, dict) or not isinstance(self.output_schema, dict):
+            raise ValueError("ToolSpec schemas must be dict")
+        for res in self.resources:
+            if "resource" not in res:
+                raise ValueError("Resource entry missing resource name")
+            mode = res.get("mode", "R").upper()
+            if mode not in {"R", "W"}:
+                raise ValueError("Resource entry mode must be R or W")
 
 
 @dataclass
@@ -80,6 +92,7 @@ class ToolAdapter:
     def __init__(self, spec: ToolSpec, handler: Callable[..., Any]) -> None:
         self.spec = spec
         self.wrapper = ToolWrapper(spec, handler)
+        self.spec.validate()
 
     def as_core_tool(self, latency_ms: float, cost: float) -> Tool:
         return Tool(

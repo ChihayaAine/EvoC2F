@@ -1,3 +1,5 @@
+"""Metrics collection and aggregation utilities."""
+
 from .tracker import MetricTracker
 
 def new_tracker() -> MetricTracker:
